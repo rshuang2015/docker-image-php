@@ -4,7 +4,7 @@
 # PLEASE DO NOT EDIT IT DIRECTLY.
 #
 
-FROM debian:bookworm-slim
+FROM ubuntu:18.04
 
 # prevent Debian's PHP packages from being installed
 # https://github.com/docker-library/php/pull/542
@@ -33,8 +33,6 @@ RUN set -eux; \
 	apt-get update; \
 	apt-get install -y --no-install-recommends \
 		$PHPIZE_DEPS \
-		ca-certificates \
-		curl \
 		xz-utils \
 	; \
 	rm -rf /var/lib/apt/lists/*
@@ -68,11 +66,63 @@ RUN set -eux; \
 	\
 	savedAptMark="$(apt-mark showmanual)"; \
 	apt-get update; \
-	apt-get install -y --no-install-recommends gnupg; \
+	apt-get install -y --no-install-recommends \
+		curl \
+		ca-certificates \
+		gnupg \
+	; \
 	rm -rf /var/lib/apt/lists/*; \
 	\
 	mkdir -p /usr/src; \
 	cd /usr/src; \
+	\
+	OPENSSL_URL="https://github.com/openssl/openssl/releases/download/openssl-3.5.0/openssl-3.5.0.tar.gz"; \
+	OPENSSL_ASC_URL="https://github.com/openssl/openssl/releases/download/openssl-3.5.0/openssl-3.5.0.tar.gz.asc"; \
+	OPENSSL_GPG_KEYS="BA5473A2B0587B07FB27CF2D216094DFD0CB81EF"; \
+	OPENSSL_GPG_SERVER="keys.openpgp.org"; \
+	\
+	curl -fsSL -o openssl.tar.gz "$OPENSSL_URL"; \
+	\
+	if [ -n "$OPENSSL_ASC_URL" ]; then \
+		curl -fsSL -o openssl.tar.gz.asc "$OPENSSL_ASC_URL"; \
+		GNUPGHOME="$(mktemp -d)"; \
+		for key in $OPENSSL_GPG_KEYS; do \
+			gpg --batch --keyserver "$OPENSSL_GPG_SERVER" --recv-keys "$key"; \
+		done; \
+		gpg --batch --verify openssl.tar.gz.asc openssl.tar.gz; \
+		gpgconf --kill all; \
+		rm -rf "$GNUPGHOME"; \
+	fi; \
+	\
+	mkdir -p /usr/src/openssl; \
+	tar -zxf openssl.tar.gz -C /usr/src/openssl --strip-components=1; \
+	\
+	CURL_URL="https://curl.se/download/curl-8.14.1.tar.gz"; \
+	CURL_ASC_URL="https://curl.se/download/curl-8.14.1.tar.gz.asc"; \
+	CURL_GPG_KEYS="27EDEAF22F3ABCEB50DB9A125CC908FDB71E12C2"; \
+	CURL_GPG_SERVER="pgp.mit.edu"; \
+	\
+	curl -fsSL -o curl.tar.gz "$CURL_URL"; \
+	\
+	if [ -n "$CURL_ASC_URL" ]; then \
+		curl -fsSL -o curl.tar.gz.asc "$CURL_ASC_URL"; \
+		GNUPGHOME="$(mktemp -d)"; \
+		for key in $CURL_GPG_KEYS; do \
+			gpg --batch --keyserver "$CURL_GPG_SERVER" --recv-keys "$key"; \
+		done; \
+		gpg --batch --verify curl.tar.gz.asc curl.tar.gz; \
+		gpgconf --kill all; \
+		rm -rf "$GNUPGHOME"; \
+	fi; \
+	\
+	mkdir -p /usr/src/curl; \
+	tar -zxf curl.tar.gz -C /usr/src/curl --strip-components=1; \
+	\
+	PHP_URL="$PHP_URL"; \
+	PHP_ASC_URL="$PHP_ASC_URL"; \
+	PHP_SHA256="$PHP_SHA256"; \
+	PHP_GPG_KEYS="$GPG_KEYS"; \
+	PHP_GPG_SERVER="keyserver.ubuntu.com"; \
 	\
 	curl -fsSL -o php.tar.xz "$PHP_URL"; \
 	\
@@ -82,9 +132,9 @@ RUN set -eux; \
 	\
 	if [ -n "$PHP_ASC_URL" ]; then \
 		curl -fsSL -o php.tar.xz.asc "$PHP_ASC_URL"; \
-		export GNUPGHOME="$(mktemp -d)"; \
-		for key in $GPG_KEYS; do \
-			gpg --batch --keyserver keyserver.ubuntu.com --recv-keys "$key"; \
+		GNUPGHOME="$(mktemp -d)"; \
+		for key in $PHP_GPG_KEYS; do \
+			gpg --batch --keyserver "$PHP_GPG_SERVER" --recv-keys "$key"; \
 		done; \
 		gpg --batch --verify php.tar.xz.asc php.tar.xz; \
 		gpgconf --kill all; \
@@ -95,6 +145,99 @@ RUN set -eux; \
 	apt-mark manual $savedAptMark > /dev/null; \
 	apt-get purge -y --auto-remove -o APT::AutoRemove::RecommendsImportant=false
 
+RUN set -eux; \
+	\
+	cd /usr/src/openssl; \
+	./Configure \
+		shared \
+		no-docs \
+		no-zlib \
+		no-ssl3 \
+		no-ssl3-method \
+		no-idea \
+		no-mdc2 \
+		no-rc5 \
+		no-weak-ssl-ciphers \
+		no-capieng \
+		no-rdrand \
+		enable-rfc3779 \
+		enable-cms \
+		enable-ec_nistp_64_gcc_128 \
+		no-tests \
+		--prefix=/usr/local \
+		--libdir=/usr/local/lib \
+		linux-x86_64 \
+		'-Wl,--enable-new-dtags,-rpath,$(LIBRPATH)' \
+	; \
+	make -j "$(nproc)"; \
+	make install; \
+	make clean; \
+	\
+	cd /; \
+	rm -rf /usr/src/openssl; \
+	\
+	openssl version -a
+
+RUN set -eux; \
+	\
+	apt-get update; \
+	apt-get install -y --no-install-recommends \
+		ca-certificates \
+		zlib1g \
+		libbrotli1 \
+		libzstd1 \
+		libidn2-0 \
+		libpsl5 \
+		libnghttp2-14 \
+		librtmp1 \
+		libldap-2.4.2 \
+		libgssapi-krb5-2 \
+	; \
+	rm -rf /var/lib/apt/lists/*; \
+	\
+	savedAptMark="$(apt-mark showmanual)"; \
+	apt-get update; \
+	apt-get install -y --no-install-recommends \
+		zlib1g-dev \
+		libbrotli-dev \
+		libzstd-dev \
+		libpsl-dev \
+		libnghttp2-dev \
+		librtmp-dev \
+		libldap2-dev \
+		libkrb5-dev \
+		libpython3-dev \
+	; \
+	rm -rf /var/lib/apt/lists/*; \
+	\
+	cd /usr/src/curl; \
+	./configure \
+		LDFLAGS="-Wl,-rpath,/usr/local/lib" \
+		--disable-docs \
+		--disable-dependency-tracking \
+		--disable-symbol-hiding \
+		--enable-versioned-symbols \
+		--enable-threaded-resolver \
+		--with-lber-lib=lber \
+		--with-gssapi \
+		--with-nghttp2 \
+		--with-openssl \
+		--with-ca-bundle=/etc/ssl/certs/ca-certificates.crt \
+		--with-ca-path=/etc/ssl/certs \
+	; \
+	make -j "$(nproc)"; \
+	make install; \
+	make clean; \
+	\
+	cd /; \
+	rm -rf /usr/src/curl; \
+	\
+	apt-mark auto '.*' > /dev/null; \
+	apt-mark manual $savedAptMark > /dev/null; \
+	apt-get purge -y --auto-remove -o APT::AutoRemove::RecommendsImportant=false; \
+	\
+	curl --version
+
 COPY docker-php-source /usr/local/bin/
 
 RUN set -eux; \
@@ -102,7 +245,7 @@ RUN set -eux; \
 	savedAptMark="$(apt-mark showmanual)"; \
 	apt-get update; \
 	apt-get install -y --no-install-recommends \
-		libargon2-dev \
+		libargon2-0-dev \
 		libcurl4-openssl-dev \
 		libonig-dev \
 		libreadline-dev \
@@ -111,6 +254,13 @@ RUN set -eux; \
 		libssl-dev \
 		libxml2-dev \
 		zlib1g-dev \
+		libbrotli-dev \
+		libzstd-dev \
+		libpsl-dev \
+		libnghttp2-dev \
+		librtmp-dev \
+		libldap2-dev \
+		libkrb5-dev \
 	; \
 	\
 	export \
@@ -120,15 +270,16 @@ RUN set -eux; \
 # https://github.com/php/php-src/blob/d6299206dd828382753453befd1b915491b741c6/configure.ac#L1496-L1511
 		PHP_BUILD_PROVIDER='https://github.com/docker-library/php' \
 		PHP_UNAME='Linux - Docker' \
+		OPENSSL_CFLAGS="-I/usr/local/include" \
+		OPENSSL_LIBS="-L/usr/local/lib -lssl -lcrypto" \
+		CURL_CFLAGS="-I/usr/local/include" \
+		CURL_LIBS="-L/usr/local/lib -lcurl" \
 	; \
 	docker-php-source extract; \
 	cd /usr/src/php; \
 	gnuArch="$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)"; \
 	debMultiarch="$(dpkg-architecture --query DEB_BUILD_MULTIARCH)"; \
 # https://bugs.php.net/bug.php?id=74125
-	if [ ! -d /usr/include/curl ]; then \
-		ln -sT "/usr/include/$debMultiarch/curl" /usr/local/include/curl; \
-	fi; \
 	./configure \
 		--build="$gnuArch" \
 		--with-config-file-path="$PHP_INI_DIR" \
@@ -207,10 +358,6 @@ RUN set -eux; \
 	; \
 	apt-get purge -y --auto-remove -o APT::AutoRemove::RecommendsImportant=false; \
 	rm -rf /var/lib/apt/lists/*; \
-	\
-# update pecl channel definitions https://github.com/docker-library/php/issues/443
-	pecl update-channels; \
-	rm -rf /tmp/pear ~/.pearrc; \
 	\
 # smoke test
 	php --version
